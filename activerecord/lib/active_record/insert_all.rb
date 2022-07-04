@@ -9,28 +9,50 @@ module ActiveRecord
 
     def initialize(model, inserts, on_duplicate:, update_only: nil, returning: nil, unique_by: nil, record_timestamps: nil)
       raise ArgumentError, "Empty list of attributes passed" if inserts.blank?
-
       @model, @connection, @inserts, @keys = model, model.connection, inserts, inserts.first.keys.map(&:to_s)
       @on_duplicate, @update_only, @returning, @unique_by = on_duplicate, update_only, returning, unique_by
       @record_timestamps = record_timestamps.nil? ? model.record_timestamps : record_timestamps
 
+      # Will raise if the passed in value is a String or otherwise not an Arel node
+      # in order to avoid SQL injection: https://github.com/rails/rails/pull/41933#discussion_r611774775
       disallow_raw_sql!(on_duplicate)
       disallow_raw_sql!(returning)
 
+      # Noops because on_duplicate is not a custom Arel node and update_only is nil
       configure_on_duplicate_update_logic
+
+      # false
+
+      @inserts.map! do |insert|
+        insert.transform_keys do |attribute|
+          alias_for = model.attribute_alias(attribute)
+          alias_for ? alias_for : attribute 
+        end
+      end
+
+      # Mutates to replace Array with Set
+      # Set implements a collection of unordered values with no duplicates.
+      @keys = inserts.first.keys.map(&:to_s)
+      @keys = @keys.to_set
 
       if model.scope_attributes?
         @scope_attributes = model.scope_attributes
         @keys |= @scope_attributes.keys
       end
-      @keys = @keys.to_set
 
+      # Will default to setting @retruning to primary_keys (often ["id"]), if it's supporting and not set
       @returning = (connection.supports_insert_returning? ? primary_keys : false) if @returning.nil?
+
+      # If @returning was set to an empty array, we'll set it to false
       @returning = false if @returning == []
 
+      # nil
       @unique_by = find_unique_index_for(unique_by)
+
+      # false & false, no change.
       @on_duplicate = :skip if @on_duplicate == :update && updatable_columns.empty?
 
+      # Will raise if invalid.
       ensure_valid_options_for_connection!
     end
 
@@ -113,12 +135,15 @@ module ActiveRecord
           raise ArgumentError, "#{connection.class} does not support :unique_by"
         end
 
+        # => "id"
         name_or_columns = unique_by || model.primary_key
+        # => ["id"]
         match = Array(name_or_columns).map(&:to_s)
 
+        # => unique_indexs == nil
         if index = unique_indexes.find { |i| match.include?(i.name) || i.columns == match }
           index
-        elsif match == primary_keys
+        elsif match == primary_keys #=> true
           unique_by.nil? ? nil : ActiveRecord::ConnectionAdapters::IndexDefinition.new(model.table_name, "#{model.table_name}_primary_key", true, match)
         else
           raise ArgumentError, "No unique index found for #{name_or_columns}"
