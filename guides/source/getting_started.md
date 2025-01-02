@@ -773,11 +773,6 @@ get "/blog/:title", to: "blog#show"
 Rails will capture `hello-world` out of `/blog/hello-world` and this can be used
 to look up the blog post with the matching title.
 
-
-```ruby
-get "/blog/:slug", to: "blog#show"
-```
-
 #### CRUD Routes
 
 There are 4 common actions you will generally need for a resource: Create, Read,
